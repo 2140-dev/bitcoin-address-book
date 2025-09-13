@@ -3,15 +3,6 @@ check:
   cargo clippy --all-targets -- -D warnings
   cargo check --all-features
 
-run build="release":
-  just _run-{{build}}
-
-_run-debug:
-  cargo run
-
-_run-release:
-  cargo run --release
-
 # Run a test suite: unit, msrv, min-versions
 test suite="unit":
   just _test-{{suite}}

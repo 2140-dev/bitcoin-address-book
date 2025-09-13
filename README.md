@@ -1,11 +1,5 @@
-# Quickstart for new Rust projects
+# Bitcoin Address Manager
 
-Useful `just` commands:
-
-`just run`: run the binary in release mode
-
-`just test`: run the unit tests, doc tests (will fail if there is no library)
-
-`just delete`: delete local git branches that have been merged to master
+This crate is inspired by Bitcoin Core's `AddrMan`, which manages network addresses of potential Bitcoin nodes. A network address manager should be resistant to a single entity filling the entire cache and maximize diversity connections.
 
 
