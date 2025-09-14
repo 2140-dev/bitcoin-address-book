@@ -8,7 +8,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use bitcoin::p2p::{address::AddrV2, ServiceFlags};
+use p2p::{address::AddrV2, ServiceFlags};
 
 const ONE_MINUTE: Duration = Duration::from_secs(60);
 const ONE_WEEK: Duration = Duration::from_secs(604800);
@@ -361,7 +361,7 @@ impl DestinationIdExt for AddrV2 {
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
 
-    use bitcoin::p2p::{address::AddrV2, ServiceFlags};
+    use p2p::{address::AddrV2, ServiceFlags};
 
     use crate::{Record, Table};
 
