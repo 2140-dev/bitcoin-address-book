@@ -13,7 +13,8 @@ use bitcoin::{
     consensus,
     p2p::{address::AddrV2, ServiceFlags},
 };
-mod io;
+/// Perform basic I/O operations on the address book.
+pub mod io;
 
 const ONE_MINUTE: Duration = Duration::from_secs(60);
 const ONE_WEEK: Duration = Duration::from_secs(604800);
@@ -501,7 +502,11 @@ impl DestinationIdExt for AddrV2 {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::{
+        hash::{DefaultHasher, Hash, Hasher},
+        net::{IpAddr, Ipv4Addr},
+        time::SystemTime,
+    };
 
     use bitcoin::p2p::{address::AddrV2, ServiceFlags};
 
@@ -513,6 +518,23 @@ mod tests {
     const BUCKETS: usize = 256;
     const SLOTS: usize = 16;
     const RANGE: usize = 16;
+
+    pub fn random_record() -> Record {
+        let mut hasher = DefaultHasher::new();
+        let now = SystemTime::now();
+        now.hash(&mut hasher);
+        let bytes = hasher.finish();
+        let ip = bytes.to_le_bytes();
+        let dest = Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3]);
+        let source = Ipv4Addr::new(ip[4], ip[5], ip[6], ip[7]);
+        let now = SystemTime::now();
+        now.hash(&mut hasher);
+        let bytes = hasher.finish();
+        let addr_v2 = AddrV2::Ipv4(dest);
+        let mut record = Record::new(addr_v2, 8333, ServiceFlags::NETWORK, &IpAddr::V4(source));
+        record.failed_attempts += bytes.to_le_bytes()[0];
+        record
+    }
 
     #[test]
     fn test_simple_table_situations() {
@@ -535,9 +557,11 @@ mod tests {
 
     #[test]
     fn test_encoding_roundtrip() {
-        let record = Record::new(DUMB, 8333, ServiceFlags::NONE, &IpAddr::V4(LOCAL_HOST));
-        let record_bytes = record.clone().serialize();
-        let deser = Record::deserialize(&mut record_bytes.as_slice()).unwrap();
-        assert_eq!(record, deser);
+        for _ in 0..BUCKETS * SLOTS {
+            let want = random_record();
+            let bytes = want.clone().serialize();
+            let got = Record::deserialize(&mut bytes.as_slice()).unwrap();
+            assert_eq!(want, got);
+        }
     }
 }
