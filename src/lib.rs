@@ -14,7 +14,7 @@ const ONE_MINUTE: Duration = Duration::from_secs(60);
 const ONE_WEEK: Duration = Duration::from_secs(604800);
 
 /// A record of a potential Bitcoin peer.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
     addr: AddrV2,
     port: u16,
@@ -174,6 +174,14 @@ impl<const B: usize, const S: usize, const W: usize> Table<B, S, W> {
         self.buckets[bucket_index].remove(record);
     }
 
+    /// Count the occurrences of a network address.
+    pub fn count(&self, record: &Record) -> usize {
+        self.buckets
+            .iter()
+            .filter(|bucket| bucket.has_record(record))
+            .count()
+    }
+
     /// Is the entire address book empty.
     pub fn is_empty(&self) -> bool {
         self.buckets.iter().all(|bucket| bucket.is_empty())
@@ -258,6 +266,14 @@ impl<const S: usize> Bucket<S> {
     fn remove(&mut self, record: &Record) {
         let slot = Self::derive_slot(record);
         self.records[slot] = None;
+    }
+
+    fn has_record(&self, record: &Record) -> bool {
+        let slot = Self::derive_slot(record);
+        match &self.records[slot] {
+            Some(cmp) => cmp.eq(record),
+            None => false,
+        }
     }
 
     fn is_empty(&self) -> bool {
@@ -388,5 +404,6 @@ mod tests {
         for _ in 0..BUCKETS * SLOTS {
             assert!(table.add(&record).is_some());
         }
+        assert_eq!(table.count(&record), 1);
     }
 }
