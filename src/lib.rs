@@ -72,6 +72,29 @@ impl Record {
         }
     }
 
+    pub fn new_from_addrv2_source(
+        addr: AddrV2,
+        port: u16,
+        services: ServiceFlags,
+        source: &AddrV2,
+    ) -> Self {
+        let source = match source {
+            AddrV2::Ipv4(ip) => IpAddr::V4(*ip).source_id(),
+            AddrV2::Ipv6(ip) => IpAddr::V6(*ip).source_id(),
+            // All the mixnets go in the same source,
+            _ => SourceId([1u8; 8]),
+        };
+        Self {
+            addr,
+            port,
+            source,
+            services,
+            failed_attempts: 0,
+            last_connection: None,
+            last_attempt: None,
+        }
+    }
+
     /// Build a new record from deserialization
     pub fn deserialize<R: Read>(reader: &mut R) -> Result<Self, std::io::Error> {
         let mut size_buf = [0u8; 1];
