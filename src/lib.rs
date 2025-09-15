@@ -4,28 +4,60 @@
 
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
+    io::Read,
     net::IpAddr,
-    time::{Duration, SystemTime},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use bitcoin::p2p::{address::AddrV2, ServiceFlags};
+use bitcoin::{
+    consensus,
+    p2p::{address::AddrV2, ServiceFlags},
+};
+/// Perform basic I/O operations on the address book.
+pub mod io;
 
 const ONE_MINUTE: Duration = Duration::from_secs(60);
 const ONE_WEEK: Duration = Duration::from_secs(604800);
 
 /// A record of a potential Bitcoin peer.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
     addr: AddrV2,
     port: u16,
     source: SourceId,
     services: ServiceFlags,
     failed_attempts: u8,
-    last_connection: Option<SystemTime>,
-    last_attempt: Option<SystemTime>,
+    last_connection: Option<Duration>,
+    last_attempt: Option<Duration>,
 }
 
 impl Record {
+    fn compute_size(&self) -> u8 {
+        let mut size = 0;
+        match &self.addr {
+            AddrV2::I2p(_) => size += 34,
+            AddrV2::Ipv4(_) => size += 6,
+            AddrV2::Ipv6(_) => size += 18,
+            AddrV2::TorV2(_) => size += 12,
+            AddrV2::TorV3(_) => size += 34,
+            AddrV2::Cjdns(_) => size += 18,
+            AddrV2::Unknown(len, _) => size += *len,
+        }
+        // port
+        size += 2;
+        // source id
+        size += self.source.0.len() as u8;
+        // service flags
+        size += 8;
+        // failed attempts
+        size += 1;
+        // time encoding
+        size += 9;
+        //time encoding
+        size += 9;
+        size
+    }
+
     /// Construct a new record from a gossip message.
     pub fn new(addr: AddrV2, port: u16, services: ServiceFlags, source: &IpAddr) -> Self {
         let source = source.source_id();
@@ -38,6 +70,70 @@ impl Record {
             last_connection: None,
             last_attempt: None,
         }
+    }
+
+    /// Build a new record from deserialization
+    pub fn deserialize<R: Read>(reader: &mut R) -> Result<Self, std::io::Error> {
+        let mut size_buf = [0u8; 1];
+        reader.read_exact(&mut size_buf)?;
+        let size = u8::from_le_bytes(size_buf);
+        let mut content_buf = vec![0u8; size as usize];
+        reader.read_exact(&mut content_buf)?;
+        let (addr, len) =
+            consensus::deserialize_partial::<AddrV2>(&content_buf).expect("must have 33 bytes");
+        let mut content_slice = &content_buf[len..];
+        let mut port_buf = [0u8; 2];
+        content_slice.read_exact(&mut port_buf)?;
+        let port = u16::from_le_bytes(port_buf);
+        let mut source_buf = [0u8; 8];
+        content_slice.read_exact(&mut source_buf)?;
+        let source = SourceId(source_buf);
+        let mut service_buf = [0u8; 8];
+        content_slice.read_exact(&mut service_buf)?;
+        let services = ServiceFlags::from(u64::from_le_bytes(service_buf));
+        let mut failed_buf = [0u8; 1];
+        content_slice.read_exact(&mut failed_buf)?;
+        let failed_attempts = u8::from_le_bytes(failed_buf);
+        let mut record = Record {
+            addr,
+            port,
+            source,
+            services,
+            failed_attempts,
+            last_connection: None,
+            last_attempt: None,
+        };
+        let mut last_attempt_buf = [0u8; 1];
+        content_slice.read_exact(&mut last_attempt_buf)?;
+        let should_read = u8::from_le_bytes(last_attempt_buf);
+        match should_read {
+            0u8 => {
+                content_slice.read_exact(&mut [0u8; 8])?;
+            }
+            1u8 => {
+                let mut time_buf = [0u8; 8];
+                content_slice.read_exact(&mut time_buf)?;
+                let secs = u64::from_le_bytes(time_buf);
+                record.last_attempt = Some(Duration::from_secs(secs));
+            }
+            _ => panic!("invalid time encoding"),
+        }
+        let mut last_conn_buf = [0u8; 1];
+        content_slice.read_exact(&mut last_conn_buf)?;
+        let should_read = u8::from_le_bytes(last_conn_buf);
+        match should_read {
+            0u8 => {
+                content_slice.read_exact(&mut [0u8; 8])?;
+            }
+            1u8 => {
+                let mut time_buf = [0u8; 8];
+                content_slice.read_exact(&mut time_buf)?;
+                let secs = u64::from_le_bytes(time_buf);
+                record.last_connection = Some(Duration::from_secs(secs));
+            }
+            _ => panic!("invalid time encoding"),
+        }
+        Ok(record)
     }
 
     fn destination_id(&self) -> DestinationId {
@@ -54,18 +150,42 @@ impl Record {
         self.services
     }
 
+    /// Serialize a record into bytes.
+    pub fn serialize(self) -> Vec<u8> {
+        let len = self.compute_size();
+        let mut buf = Vec::with_capacity(len.into());
+        buf.push(len);
+        let addr = consensus::serialize(&self.addr);
+        buf.extend(addr);
+        buf.extend(self.port.to_le_bytes());
+        buf.extend(self.source.0);
+        buf.extend(self.services.to_u64().to_le_bytes());
+        buf.push(self.failed_attempts);
+        if let Some(last_attempt) = self.last_attempt {
+            buf.push(0x01);
+            let secs = last_attempt.as_secs().to_le_bytes();
+            buf.extend(secs);
+        } else {
+            buf.extend([0u8; 9]);
+        }
+        if let Some(last_conn) = self.last_connection {
+            buf.push(0x01);
+            let secs = last_conn.as_secs().to_le_bytes();
+            buf.extend(secs);
+        } else {
+            buf.extend([0u8; 9]);
+        }
+        buf
+    }
+
     /// Similar to the `AddrMan::IsTerrible` function in Bitcoin Core. If the peer has been tried
     /// many times with no successes, then it is best to evict this peer from the table.
     pub fn is_terrible(&self, maximum_tries: u8, maximum_weekly_tries: u8) -> bool {
         if let Some(attempt) = self.last_attempt {
-            let now = SystemTime::now();
-            let since_last_attempt = now
-                .duration_since(attempt)
-                .expect("system clock moving backwards");
-            if since_last_attempt < ONE_MINUTE {
+            if attempt < ONE_MINUTE {
                 return false;
             }
-            if self.failed_attempts > maximum_weekly_tries && since_last_attempt < ONE_WEEK {
+            if self.failed_attempts > maximum_weekly_tries && attempt < ONE_WEEK {
                 return true;
             }
         }
@@ -138,12 +258,7 @@ impl<const B: usize, const S: usize, const W: usize> Table<B, S, W> {
                 let Some(last_attempt) = record.last_attempt else {
                     return Some(record);
                 };
-                let now = SystemTime::now();
-                if now
-                    .duration_since(last_attempt)
-                    .expect("system clock moving backwards")
-                    > ONE_MINUTE
-                {
+                if last_attempt > ONE_MINUTE {
                     return Some(record);
                 }
             }
@@ -172,6 +287,14 @@ impl<const B: usize, const S: usize, const W: usize> Table<B, S, W> {
     pub fn remove(&mut self, record: &Record) {
         let bucket_index = Self::derive_bucket(record);
         self.buckets[bucket_index].remove(record);
+    }
+
+    /// Count the occurrences of a network address.
+    pub fn count(&self, record: &Record) -> usize {
+        self.buckets
+            .iter()
+            .filter(|bucket| bucket.has_record(record))
+            .count()
     }
 
     /// Is the entire address book empty.
@@ -260,6 +383,14 @@ impl<const S: usize> Bucket<S> {
         self.records[slot] = None;
     }
 
+    fn has_record(&self, record: &Record) -> bool {
+        let slot = Self::derive_slot(record);
+        match &self.records[slot] {
+            Some(cmp) => cmp.eq(record),
+            None => false,
+        }
+    }
+
     fn is_empty(&self) -> bool {
         self.records.iter().all(|record| record.is_none())
     }
@@ -267,8 +398,16 @@ impl<const S: usize> Bucket<S> {
     fn successful_connection(&mut self, record: &Record) {
         let slot = Self::derive_slot(record);
         if let Some(record) = &mut self.records[slot] {
-            record.last_attempt = Some(SystemTime::now());
-            record.last_connection = Some(SystemTime::now());
+            record.last_attempt = Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("time went backwards"),
+            );
+            record.last_connection = Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("time went backwards"),
+            );
             record.failed_attempts = 0;
         }
     }
@@ -276,7 +415,11 @@ impl<const S: usize> Bucket<S> {
     fn failed_connection(&mut self, record: &Record) {
         let slot = Self::derive_slot(record);
         if let Some(record) = &mut self.records[slot] {
-            record.last_attempt = Some(SystemTime::now());
+            record.last_attempt = Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("time went backwards"),
+            );
             record.failed_attempts += 1;
         }
     }
@@ -359,7 +502,11 @@ impl DestinationIdExt for AddrV2 {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::{
+        hash::{DefaultHasher, Hash, Hasher},
+        net::{IpAddr, Ipv4Addr},
+        time::SystemTime,
+    };
 
     use bitcoin::p2p::{address::AddrV2, ServiceFlags};
 
@@ -371,6 +518,23 @@ mod tests {
     const BUCKETS: usize = 256;
     const SLOTS: usize = 16;
     const RANGE: usize = 16;
+
+    pub fn random_record() -> Record {
+        let mut hasher = DefaultHasher::new();
+        let now = SystemTime::now();
+        now.hash(&mut hasher);
+        let bytes = hasher.finish();
+        let ip = bytes.to_le_bytes();
+        let dest = Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3]);
+        let source = Ipv4Addr::new(ip[4], ip[5], ip[6], ip[7]);
+        let now = SystemTime::now();
+        now.hash(&mut hasher);
+        let bytes = hasher.finish();
+        let addr_v2 = AddrV2::Ipv4(dest);
+        let mut record = Record::new(addr_v2, 8333, ServiceFlags::NETWORK, &IpAddr::V4(source));
+        record.failed_attempts += bytes.to_le_bytes()[0];
+        record
+    }
 
     #[test]
     fn test_simple_table_situations() {
@@ -387,6 +551,17 @@ mod tests {
         // Adding the same record should always conflict.
         for _ in 0..BUCKETS * SLOTS {
             assert!(table.add(&record).is_some());
+        }
+        assert_eq!(table.count(&record), 1);
+    }
+
+    #[test]
+    fn test_encoding_roundtrip() {
+        for _ in 0..BUCKETS * SLOTS {
+            let want = random_record();
+            let bytes = want.clone().serialize();
+            let got = Record::deserialize(&mut bytes.as_slice()).unwrap();
+            assert_eq!(want, got);
         }
     }
 }
