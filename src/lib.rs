@@ -150,6 +150,11 @@ impl Record {
         self.services
     }
 
+    /// Update the most recent service flag information.
+    pub fn update_service_flags(&mut self, flags: ServiceFlags) {
+        self.services = flags;
+    }
+
     /// Serialize a record into bytes.
     pub fn serialize(self) -> Vec<u8> {
         let len = self.compute_size();
@@ -397,6 +402,7 @@ impl<const S: usize> Bucket<S> {
 
     fn successful_connection(&mut self, record: &Record) {
         let slot = Self::derive_slot(record);
+        let new_flags = record.services;
         if let Some(record) = &mut self.records[slot] {
             record.last_attempt = Some(
                 SystemTime::now()
@@ -409,6 +415,7 @@ impl<const S: usize> Bucket<S> {
                     .expect("time went backwards"),
             );
             record.failed_attempts = 0;
+            record.services = new_flags;
         }
     }
 
