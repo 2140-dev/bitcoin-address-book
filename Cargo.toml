@@ -2,6 +2,11 @@
 name = "bitcoin-address-book"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Network address manager for Bitcoin clients."
+repository = "https://github.com/2140-dev/bitcoin-address-book"
+keywords = ["bitcoin", "cryptography", "network", "peer-to-peer"]
+categories = ["cryptography::cryptocurrencies"]
 rust-version = "1.84"
 
 [lib]
