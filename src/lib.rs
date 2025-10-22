@@ -9,10 +9,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use bitcoin::{
-    consensus,
-    p2p::{address::AddrV2, ServiceFlags},
-};
+use bitcoin::consensus;
+use p2p_types::{address::AddrV2, ServiceFlags};
 /// Perform basic I/O operations on the address book.
 pub mod io;
 
@@ -38,7 +36,6 @@ impl Record {
             AddrV2::I2p(_) => size += 34,
             AddrV2::Ipv4(_) => size += 6,
             AddrV2::Ipv6(_) => size += 18,
-            AddrV2::TorV2(_) => size += 12,
             AddrV2::TorV3(_) => size += 34,
             AddrV2::Cjdns(_) => size += 18,
             AddrV2::Unknown(len, _) => size += *len,
@@ -538,7 +535,7 @@ mod tests {
         time::SystemTime,
     };
 
-    use bitcoin::p2p::{address::AddrV2, ServiceFlags};
+    use p2p_types::{address::AddrV2, ServiceFlags};
 
     use crate::{Record, Table};
 
