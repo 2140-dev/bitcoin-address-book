@@ -82,7 +82,7 @@ impl Record {
             AddrV2::Ipv4(ip) => IpAddr::V4(*ip).source_id(),
             AddrV2::Ipv6(ip) => IpAddr::V6(*ip).source_id(),
             // All the mixnets go in the same source,
-            _ => SourceId([1u8; 8]),
+            _ => SourceId([1u8; 4]),
         };
         Self {
             addr,
@@ -108,7 +108,7 @@ impl Record {
         let mut port_buf = [0u8; 2];
         content_slice.read_exact(&mut port_buf)?;
         let port = u16::from_le_bytes(port_buf);
-        let mut source_buf = [0u8; 8];
+        let mut source_buf = [0u8; 4];
         content_slice.read_exact(&mut source_buf)?;
         let source = SourceId(source_buf);
         let mut service_buf = [0u8; 8];
@@ -255,9 +255,9 @@ impl<const B: usize, const S: usize, const W: usize> Table<B, S, W> {
     //
     // We derive a bucket (63 * 16) + 7 % 1024 = 1015
     fn derive_bucket(record: &Record) -> usize {
-        let salt = usize::from_le_bytes(record.source.0) % W;
+        let salt = u32::from_le_bytes(record.source.0) as usize % W;
         let range = (salt * Self::RUN) % B;
-        let index = usize::from_le_bytes(record.destination_id().0) % W;
+        let index = u32::from_le_bytes(record.destination_id().0) as usize % W;
         (range + index) % B
     }
 
@@ -265,13 +265,23 @@ impl<const B: usize, const S: usize, const W: usize> Table<B, S, W> {
     fn random_bucket() -> usize {
         let mut hasher = DefaultHasher::new();
         SystemTime::now().hash(&mut hasher);
-        usize::from_le_bytes(hasher.finish().to_le_bytes()) % B
+        u32::from_le_bytes(
+            hasher.finish().to_le_bytes()[..4]
+                .try_into()
+                .expect("hash is u64"),
+        ) as usize
+            % B
     }
 
     fn random_slot() -> usize {
         let mut hasher = DefaultHasher::new();
         SystemTime::now().hash(&mut hasher);
-        usize::from_le_bytes(hasher.finish().to_le_bytes()) % S
+        u32::from_le_bytes(
+            hasher.finish().to_le_bytes()[..4]
+                .try_into()
+                .expect("hash is u64"),
+        ) as usize
+            % S
     }
 
     fn random_from_bucket(bucket: &Bucket<S>) -> Option<Record> {
@@ -386,7 +396,7 @@ struct Bucket<const S: usize> {
 
 impl<const S: usize> Bucket<S> {
     fn derive_slot(record: &Record) -> usize {
-        let index = usize::from_le_bytes(record.destination_id().0);
+        let index = u32::from_le_bytes(record.destination_id().0) as usize;
         index % S
     }
 
@@ -461,7 +471,7 @@ impl<const S: usize> Bucket<S> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, std::hash::Hash)]
-struct SourceId([u8; 8]);
+struct SourceId([u8; 4]);
 
 trait SourceIdExt {
     fn source_id(&self) -> SourceId;
@@ -476,7 +486,7 @@ impl SourceIdExt for IpAddr {
                 let first_two_octets = [octets[0], octets[1]];
                 first_two_octets.hash(&mut hasher);
                 let hash = hasher.finish();
-                let bytes = hash.to_le_bytes();
+                let bytes: [u8; 4] = hash.to_le_bytes()[..4].try_into().expect("hash is u64");
                 SourceId(bytes)
             }
             Self::V6(ipv6) => {
@@ -484,7 +494,7 @@ impl SourceIdExt for IpAddr {
                 let first_four_octets = [octets[0], octets[1], octets[2], octets[3]];
                 first_four_octets.hash(&mut hasher);
                 let hash = hasher.finish();
-                let bytes = hash.to_le_bytes();
+                let bytes = hash.to_le_bytes()[..4].try_into().expect("hash is u64");
                 SourceId(bytes)
             }
         }
@@ -492,7 +502,7 @@ impl SourceIdExt for IpAddr {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, std::hash::Hash)]
-struct DestinationId([u8; 8]);
+struct DestinationId([u8; 4]);
 
 trait DestinationIdExt {
     fn destination_id(&self) -> DestinationId;
@@ -504,27 +514,51 @@ impl DestinationIdExt for AddrV2 {
         match self {
             Self::Ipv4(ipv4) => {
                 ipv4.octets().hash(&mut hasher);
-                DestinationId(hasher.finish().to_le_bytes())
+                DestinationId(
+                    hasher.finish().to_le_bytes()[..4]
+                        .try_into()
+                        .expect("hash is u64"),
+                )
             }
             Self::Ipv6(ipv6) => {
                 ipv6.octets().hash(&mut hasher);
-                DestinationId(hasher.finish().to_le_bytes())
+                DestinationId(
+                    hasher.finish().to_le_bytes()[..4]
+                        .try_into()
+                        .expect("hash is u64"),
+                )
             }
             Self::I2p(i2p) => {
                 i2p.hash(&mut hasher);
-                DestinationId(hasher.finish().to_le_bytes())
+                DestinationId(
+                    hasher.finish().to_le_bytes()[..4]
+                        .try_into()
+                        .expect("hash is u64"),
+                )
             }
             Self::TorV3(tv3) => {
                 tv3.hash(&mut hasher);
-                DestinationId(hasher.finish().to_le_bytes())
+                DestinationId(
+                    hasher.finish().to_le_bytes()[..4]
+                        .try_into()
+                        .expect("hash is u64"),
+                )
             }
             Self::Cjdns(ipv6) => {
                 ipv6.octets().hash(&mut hasher);
-                DestinationId(hasher.finish().to_le_bytes())
+                DestinationId(
+                    hasher.finish().to_le_bytes()[..4]
+                        .try_into()
+                        .expect("hash is u64"),
+                )
             }
             _ => {
                 "unknown network address".hash(&mut hasher);
-                DestinationId(hasher.finish().to_le_bytes())
+                DestinationId(
+                    hasher.finish().to_le_bytes()[..4]
+                        .try_into()
+                        .expect("hash is u64"),
+                )
             }
         }
     }
