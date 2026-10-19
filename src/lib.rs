@@ -102,8 +102,8 @@ impl Record {
         let size = u8::from_le_bytes(size_buf);
         let mut content_buf = vec![0u8; size as usize];
         reader.read_exact(&mut content_buf)?;
-        let (addr, len) =
-            consensus::deserialize_partial::<AddrV2>(&content_buf).expect("must have 33 bytes");
+        let (addr, len) = consensus::deserialize_partial::<AddrV2>(&content_buf)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         let mut content_slice = &content_buf[len..];
         let mut port_buf = [0u8; 2];
         content_slice.read_exact(&mut port_buf)?;
@@ -139,7 +139,12 @@ impl Record {
                 let secs = u64::from_le_bytes(time_buf);
                 record.last_attempt = Some(Duration::from_secs(secs));
             }
-            _ => panic!("invalid time encoding"),
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "invalid time encoding",
+                ))
+            }
         }
         let mut last_conn_buf = [0u8; 1];
         content_slice.read_exact(&mut last_conn_buf)?;
@@ -154,7 +159,12 @@ impl Record {
                 let secs = u64::from_le_bytes(time_buf);
                 record.last_connection = Some(Duration::from_secs(secs));
             }
-            _ => panic!("invalid time encoding"),
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "invalid time encoding",
+                ))
+            }
         }
         Ok(record)
     }
@@ -627,5 +637,27 @@ mod tests {
             let got = Record::deserialize(&mut bytes.as_slice()).unwrap();
             assert_eq!(want, got);
         }
+    }
+
+    #[test]
+    fn test_malformed_encoding_errors() {
+        let bytes = random_record().serialize();
+        // Invalid address network/length
+        let mut bad_addr = bytes.clone();
+        bad_addr[1] = 0x01;
+        bad_addr[2] = 0xff;
+        assert!(Record::deserialize(&mut bad_addr.as_slice()).is_err());
+        // Invalid last attempt time flag
+        let mut bad_attempt = bytes.clone();
+        let index = bad_attempt.len() - 18;
+        bad_attempt[index] = 0x02;
+        assert!(Record::deserialize(&mut bad_attempt.as_slice()).is_err());
+        // Invalid last connection time flag
+        let mut bad_conn = bytes.clone();
+        let index = bad_conn.len() - 9;
+        bad_conn[index] = 0x02;
+        assert!(Record::deserialize(&mut bad_conn.as_slice()).is_err());
+        // Truncated record
+        assert!(Record::deserialize(&mut &bytes[..bytes.len() - 1]).is_err());
     }
 }
