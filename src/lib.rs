@@ -419,8 +419,9 @@ struct Bucket<const S: usize> {
 
 impl<const S: usize> Bucket<S> {
     fn derive_slot(record: &Record) -> usize {
-        let index = u32::from_le_bytes(record.destination_id().0) as usize;
-        index % S
+        let mut hasher = DefaultHasher::new();
+        record.destination_id().hash(&mut hasher);
+        hasher.finish() as usize % S
     }
 
     const fn new() -> Self {
@@ -650,6 +651,18 @@ mod tests {
             let got = Record::deserialize(&mut bytes.as_slice()).unwrap();
             assert_eq!(want, got);
         }
+    }
+
+    #[test]
+    fn test_every_slot_reachable() {
+        let mut table = Table::<16, 16, 4>::new();
+        for _ in 0..100_000 {
+            table.add(&random_record());
+        }
+        assert!(table
+            .buckets
+            .iter()
+            .all(|bucket| bucket.records.iter().all(Option::is_some)));
     }
 
     #[test]
