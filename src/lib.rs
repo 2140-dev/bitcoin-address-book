@@ -240,10 +240,7 @@ impl Record {
                 return true;
             }
         }
-        if self.failed_attempts > maximum_tries {
-            return true;
-        }
-        false
+        self.failed_attempts > maximum_tries
     }
 }
 
