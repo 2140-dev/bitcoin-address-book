@@ -5,6 +5,9 @@ use std::{
 
 use crate::{Record, Table};
 
+/// Bytes written at the start of every address book file.
+const MAGIC: [u8; 4] = *b"ADBK";
+
 /// Extension the the standard file type.
 pub trait FileExt {
     /// Write the entire table to a file.
@@ -30,6 +33,7 @@ impl FileExt for File {
                 unordered_records.push(record.clone());
             }
         }
+        self.write_all(&MAGIC)?;
         let len_bytes = unordered_records.len() as u64;
         self.write_all(&len_bytes.to_le_bytes())?;
         for record in unordered_records {
@@ -44,6 +48,14 @@ impl FileExt for File {
     fn read_table<const B: usize, const S: usize, const W: usize>(
         &mut self,
     ) -> Result<Table<B, S, W>, std::io::Error> {
+        let mut magic_buf = [0u8; 4];
+        self.read_exact(&mut magic_buf)?;
+        if magic_buf != MAGIC {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid magic bytes",
+            ));
+        }
         let mut table = Table::new();
         let mut size_buf = [0u8; 8];
         self.read_exact(&mut size_buf)?;
@@ -81,5 +93,15 @@ mod tests {
         let mut file = File::open(&path).unwrap();
         file.read_table::<128, 16, 16>().unwrap();
         fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn test_file_bad_magic() {
+        let path = "./bad_magic.book".parse::<PathBuf>().unwrap();
+        fs::write(&path, [0u8; 12]).unwrap();
+        let mut file = File::open(&path).unwrap();
+        let err = file.read_table::<128, 16, 16>().unwrap_err();
+        fs::remove_file(&path).unwrap();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 }
