@@ -470,7 +470,7 @@ impl<const S: usize> Bucket<S> {
                     .duration_since(UNIX_EPOCH)
                     .expect("time went backwards"),
             );
-            record.failed_attempts += 1;
+            record.failed_attempts = record.failed_attempts.saturating_add(1);
         }
     }
 
