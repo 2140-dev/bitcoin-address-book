@@ -229,6 +229,10 @@ impl Record {
     /// many times with no successes, then it is best to evict this peer from the table.
     pub fn is_terrible(&self, maximum_tries: u8, maximum_weekly_tries: u8) -> bool {
         if let Some(attempt) = self.last_attempt {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time went backwards");
+            let attempt = now.saturating_sub(attempt);
             if attempt < ONE_MINUTE {
                 return false;
             }
@@ -308,6 +312,9 @@ impl<const B: usize, const S: usize, const W: usize> Table<B, S, W> {
             return None;
         }
         let slot_index = Self::random_slot();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards");
         let mut tmp = (slot_index + 1) % S;
         while tmp.ne(&slot_index) {
             let record = bucket.get(tmp);
@@ -315,7 +322,7 @@ impl<const B: usize, const S: usize, const W: usize> Table<B, S, W> {
                 let Some(last_attempt) = record.last_attempt else {
                     return Some(record);
                 };
-                if last_attempt > ONE_MINUTE {
+                if now.saturating_sub(last_attempt) > ONE_MINUTE {
                     return Some(record);
                 }
             }
