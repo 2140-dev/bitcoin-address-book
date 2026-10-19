@@ -41,7 +41,7 @@ impl Record {
             AddrV2::TorV2(_) => size += 12,
             AddrV2::TorV3(_) => size += 34,
             AddrV2::Cjdns(_) => size += 18,
-            AddrV2::Unknown(len, _) => size += *len,
+            AddrV2::Unknown(..) => unreachable!("unknown addresses are not serialized"),
         }
         // port
         size += 2;
@@ -188,7 +188,16 @@ impl Record {
         self.services = flags;
     }
 
+    /// Whether this record can be serialized with [`Record::serialize`].
+    pub fn is_serializable(&self) -> bool {
+        !matches!(self.addr, AddrV2::Unknown(..))
+    }
+
     /// Serialize a record into bytes.
+    ///
+    /// # Panics
+    ///
+    /// If the record is not serializable. See [`Record::is_serializable`].
     pub fn serialize(self) -> Vec<u8> {
         let len = self.compute_size();
         let mut buf = Vec::with_capacity(len.into());

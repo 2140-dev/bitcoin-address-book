@@ -30,7 +30,9 @@ impl FileExt for File {
         let mut unordered_records = Vec::new();
         for bucket in &table.buckets {
             for record in bucket.records.iter().flatten() {
-                unordered_records.push(record.clone());
+                if record.is_serializable() {
+                    unordered_records.push(record.clone());
+                }
             }
         }
         self.write_all(&MAGIC)?;
@@ -75,7 +77,11 @@ mod tests {
         path::PathBuf,
     };
 
-    use crate::{tests::random_record, Table};
+    use std::net::{IpAddr, Ipv4Addr};
+
+    use bitcoin::p2p::{address::AddrV2, ServiceFlags};
+
+    use crate::{tests::random_record, Record, Table};
 
     use super::FileExt;
 
@@ -93,6 +99,29 @@ mod tests {
         let mut file = File::open(&path).unwrap();
         file.read_table::<128, 16, 16>().unwrap();
         fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn test_file_skips_unknown() {
+        let path = "./unknown.book".parse::<PathBuf>().unwrap();
+        let mut table = Table::<128, 16, 16>::new();
+        let known = random_record();
+        table.add(&known);
+        let unknown = Record::new(
+            AddrV2::Unknown(42, vec![0xab; 300]),
+            8333,
+            ServiceFlags::NONE,
+            &IpAddr::V4(Ipv4Addr::LOCALHOST),
+        );
+        table.add(&unknown);
+        let mut file = File::create(&path).unwrap();
+        file.write_table(&table).unwrap();
+        drop(file);
+        let mut file = File::open(&path).unwrap();
+        let read = file.read_table::<128, 16, 16>().unwrap();
+        fs::remove_file(&path).unwrap();
+        assert_eq!(read.count(&known), 1);
+        assert_eq!(read.count(&unknown), 0);
     }
 
     #[test]
