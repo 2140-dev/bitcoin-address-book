@@ -325,7 +325,9 @@ impl<const B: usize, const S: usize, const W: usize> Table<B, S, W> {
             }
             tmp = (tmp + 1) % S;
         }
-        bucket.get(slot_index)
+        bucket
+            .get(slot_index)
+            .or_else(|| bucket.records.iter().flatten().next().cloned())
     }
 
     /// Build a new table to store records of peers.
@@ -641,6 +643,20 @@ mod tests {
             assert!(table.add(&record).is_some());
         }
         assert_eq!(table.count(&record), 1);
+    }
+
+    #[test]
+    fn test_select_recently_attempted() {
+        let mut table = Table::<BUCKETS, SLOTS, RANGE>::new();
+        let record = Record::new(DUMB, 8333, ServiceFlags::NONE, &IpAddr::V4(LOCAL_HOST));
+        table.add(&record);
+        table.failed_connection(&record);
+        for _ in 0..BUCKETS * SLOTS {
+            assert_eq!(
+                table.select().map(|record| record.network_addr()),
+                Some(record.network_addr())
+            );
+        }
     }
 
     #[test]
